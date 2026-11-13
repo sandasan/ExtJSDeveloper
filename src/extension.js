@@ -1,70 +1,41 @@
 const vscode = require('vscode');
-const path = require('path');
+const { tokenize, scanFile, findReferenceTokens } = require('./parser');
 
 const JS_FILES = '**/*.{js,jsx,mjs,cjs}';
 const classes = new Map();
 const aliases = new Map();
+const indexedFiles = new Map();
 let tree;
 let watcher;
-
-function unquote(value) { return value && value.replace(/^['"]|['"]$/g, ''); }
-
-function scan(text, uri) {
-  const found = [];
-  // Ext.define's first argument is the canonical class name. Metadata is read from its config block.
-  const define = /Ext\.define\s*\(\s*(['"])([^'"\n]+)\1\s*,\s*\{/g;
-  let match;
-  while ((match = define.exec(text))) {
-    const start = match.index;
-    const open = text.indexOf('{', define.lastIndex - 1);
-    const end = findObjectEnd(text, open);
-    const block = text.slice(open + 1, end < 0 ? text.length : end);
-    const className = match[2];
-    const aliasValues = [];
-    const aliasMatch = block.match(/\balias\s*:\s*(\[[\s\S]*?\]|['"][^'"]+['"])/);
-    if (aliasMatch) {
-      const values = aliasMatch[1].match(/['"]([^'"]+)['"]/g) || [];
-      aliasValues.push(...values.map(unquote));
-    }
-    const xtypeMatch = block.match(/\bxtype\s*:\s*(['"])([^'"]+)\1/);
-    if (xtypeMatch) aliasValues.push(`widget.${xtypeMatch[2]}`);
-    found.push({ name: className, aliases: [...new Set(aliasValues)], uri, offset: start });
-  }
-  return found;
-}
-
-function findObjectEnd(text, open) {
-  if (open < 0) return -1;
-  let depth = 0, quote = '', escaped = false, lineComment = false, blockComment = false;
-  for (let i = open; i < text.length; i++) {
-    const c = text[i], next = text[i + 1];
-    if (lineComment) { if (c === '\n') lineComment = false; continue; }
-    if (blockComment) { if (c === '*' && next === '/') { blockComment = false; i++; } continue; }
-    if (quote) { if (escaped) escaped = false; else if (c === '\\') escaped = true; else if (c === quote) quote = ''; continue; }
-    if (c === '/' && next === '/') { lineComment = true; i++; continue; }
-    if (c === '/' && next === '*') { blockComment = true; i++; continue; }
-    if (c === '"' || c === "'" || c === '`') { quote = c; continue; }
-    if (c === '{') depth++;
-    if (c === '}' && --depth === 0) return i;
-  }
-  return -1;
-}
+let rebuildVersion = 0;
 
 async function rebuild() {
-  classes.clear(); aliases.clear();
-  if (!vscode.workspace.workspaceFolders) { tree?.refresh(); return; }
+  const version = ++rebuildVersion;
+  if (!vscode.workspace.workspaceFolders) {
+    classes.clear(); aliases.clear(); indexedFiles.clear(); tree?.refresh();
+    return;
+  }
   const excluded = vscode.workspace.getConfiguration('extjsNavigator').get('exclude', []);
   const exclude = excluded.length ? `{${excluded.join(',')}}` : undefined;
   const files = await vscode.workspace.findFiles(JS_FILES, exclude);
+  const nextClasses = new Map(), nextAliases = new Map(), nextFiles = new Map();
   await Promise.all(files.map(async uri => {
     try {
       const bytes = await vscode.workspace.fs.readFile(uri);
-      for (const item of scan(Buffer.from(bytes).toString('utf8'), uri)) {
-        classes.set(item.name, item);
-        for (const alias of item.aliases) aliases.set(alias, item);
+      const text = Buffer.from(bytes).toString('utf8');
+      const parsed = scanFile(text, uri);
+      nextFiles.set(uri.toString(), { uri, text, tokens: parsed.tokens, declarations: parsed.declarations });
+      for (const item of parsed.declarations) {
+        if (!nextClasses.has(item.name)) nextClasses.set(item.name, item);
+        for (const alias of item.aliases) if (!nextAliases.has(alias)) nextAliases.set(alias, item);
       }
-    } catch (_) { /* File may have disappeared during indexing. */ }
+    } catch (_) { /* A file may have disappeared during indexing. */ }
   }));
+  if (version !== rebuildVersion) return;
+  classes.clear(); aliases.clear(); indexedFiles.clear();
+  for (const [key, value] of nextClasses) classes.set(key, value);
+  for (const [key, value] of nextAliases) aliases.set(key, value);
+  for (const [key, value] of nextFiles) indexedFiles.set(key, value);
   tree?.refresh();
 }
 
@@ -72,6 +43,43 @@ function resolve(name) { return classes.get(name) || aliases.get(name) || aliase
 function wordAt(document, position) {
   const range = document.getWordRangeAtPosition(position, /[\w.$-]+/);
   return range ? { value: document.getText(range), range } : undefined;
+}
+
+function findReferences(target, document, includeDeclaration) {
+  const sourceFiles = new Map(indexedFiles);
+  if (document) {
+    const text = document.getText();
+    sourceFiles.set(document.uri.toString(), { uri: document.uri, text, tokens: tokenize(text), declarations: [] });
+  }
+  const results = new Map();
+
+  for (const file of sourceFiles.values()) {
+    const tokens = file.tokens;
+    const lineStarts = lineStartsFor(file.text);
+    for (const token of findReferenceTokens(target, tokens, file.uri.toString(), includeDeclaration)) {
+      const key = `${file.uri.toString()}:${token.valueStart}`;
+      const start = positionAt(lineStarts, token.valueStart);
+      const end = positionAt(lineStarts, token.valueEnd);
+      results.set(key, new vscode.Location(file.uri, new vscode.Range(start, end)));
+    }
+  }
+  return [...results.values()];
+}
+
+function lineStartsFor(text) {
+  const starts = [0];
+  for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) starts.push(i + 1);
+  return starts;
+}
+
+function positionAt(lineStarts, offset) {
+  let low = 0, high = lineStarts.length;
+  while (low + 1 < high) {
+    const middle = (low + high) >> 1;
+    if (lineStarts[middle] <= offset) low = middle;
+    else high = middle;
+  }
+  return new vscode.Position(low, offset - lineStarts[low]);
 }
 
 class ClassTreeProvider {
@@ -119,6 +127,13 @@ function activate(context) {
       if (!target) return undefined;
       const targetDoc = await vscode.workspace.openTextDocument(target.uri);
       return new vscode.Location(target.uri, targetDoc.positionAt(target.offset));
+    }
+  }));
+  context.subscriptions.push(vscode.languages.registerReferenceProvider({ language: 'javascript' }, {
+    provideReferences(document, position, referenceContext) {
+      const word = wordAt(document, position);
+      const target = word && resolve(word.value);
+      return target ? findReferences(target, document, referenceContext.includeDeclaration) : [];
     }
   }));
   context.subscriptions.push(vscode.languages.registerCompletionItemProvider({ language: 'javascript' }, {
