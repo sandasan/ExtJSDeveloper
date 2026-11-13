@@ -292,6 +292,18 @@ function classTreeItem(entry, ancestry = new Set([entry.name])) {
   return item;
 }
 
+function commandLink(label, entry) {
+  const file = indexedFiles.get(entry.uri.toString());
+  if (!file) return label.replace(/[\\[\]]/g, '\\$&');
+  const args = encodeURIComponent(JSON.stringify([entry.uri.toString(), entry.offset]));
+  const safeLabel = label.replace(/[\\[\]]/g, '\\$&');
+  return `[${safeLabel}](command:extjsNavigator.openAtLocation?${args})`;
+}
+
+function inlineCode(value) {
+  return `\`${value.replace(/\\/g, '\\\\').replace(/`/g, '\\`')}\``;
+}
+
 class ClassTreeProvider {
   constructor() { this.emitter = new vscode.EventEmitter(); this.onDidChangeTreeData = this.emitter.event; }
   refresh() { this.emitter.fire(); }
@@ -382,6 +394,14 @@ function activate(context) {
   context.subscriptions.push(vscode.window.registerTreeDataProvider('extjsDependencies', dependencyTree));
   context.subscriptions.push(vscode.commands.registerCommand('extjsNavigator.refreshIndex', rebuild));
   context.subscriptions.push(vscode.commands.registerCommand('extjsNavigator.revealEntry', openEntry));
+  context.subscriptions.push(vscode.commands.registerCommand('extjsNavigator.openAtLocation', async (uriString, offset) => {
+    const uri = vscode.Uri.parse(uriString);
+    const document = await vscode.workspace.openTextDocument(uri);
+    const editor = await vscode.window.showTextDocument(document);
+    const position = document.positionAt(Math.max(0, Math.min(offset, document.getText().length)));
+    editor.selection = new vscode.Selection(position, position);
+    editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+  }));
   context.subscriptions.push(vscode.commands.registerCommand('extjsNavigator.openClass', async () => {
     const picks = [...classes.values()].sort((a, b) => a.name.localeCompare(b.name)).map(item => ({
       label: item.name, description: item.aliases.join(', '), item
@@ -405,15 +425,20 @@ function activate(context) {
       if (!entry) return undefined;
 
       const markdown = new vscode.MarkdownString();
-      markdown.appendMarkdown('**Ext JS class**\n\n');
-      markdown.appendCodeblock(entry.name, 'text');
+      markdown.isTrusted = { enabledCommands: ['extjsNavigator.openAtLocation'] };
+      markdown.appendMarkdown(`**Ext JS class**\n\n${commandLink(entry.name, entry)}\n\n`);
       if (entry.aliases.length) {
         markdown.appendMarkdown('**Aliases and xtypes**\n\n');
         markdown.appendCodeblock(entry.aliases.join('\n'), 'text');
       }
       if (entry.dependencies.length) {
         markdown.appendMarkdown('**Dependencies**\n\n');
-        markdown.appendCodeblock(entry.dependencies.map(dependency => `${dependency.kind}: ${dependency.name}`).join('\n'), 'text');
+        for (const dependency of entry.dependencies) {
+          const target = resolve(dependency.name);
+          const label = target ? commandLink(dependency.name, target) : inlineCode(dependency.name);
+          markdown.appendMarkdown(`- ${dependency.kind}: ${label}\n`);
+        }
+        markdown.appendMarkdown('\n');
       }
       const file = indexedFiles.get(entry.uri.toString());
       if (file) {
@@ -421,7 +446,7 @@ function activate(context) {
         const folder = vscode.workspace.getWorkspaceFolder(entry.uri);
         const filePath = folder ? path.relative(folder.uri.fsPath, entry.uri.fsPath) : entry.uri.fsPath;
         markdown.appendMarkdown('**Defined in**\n\n');
-        markdown.appendCodeblock(`${filePath}:${line}`, 'text');
+        markdown.appendMarkdown(`${commandLink(`${filePath}:${line}`, entry)}\n\n`);
       }
       const dependentCount = dependentsOf(entry).length;
       if (dependentCount) markdown.appendMarkdown(`Used by **${dependentCount}** indexed class${dependentCount === 1 ? '' : 'es'}.`);
