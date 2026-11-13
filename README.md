@@ -1,6 +1,6 @@
 # ExtJS Navigator
 
-A small Visual Studio Code extension for navigating Ext JS applications. The first release targets the classic `Ext.define` class system used by Ext JS 5.1 and later. It has no runtime dependencies.
+A small Visual Studio Code extension for navigating Ext JS applications. It supports classic `Ext.define` declarations and static `Ext.ClassManager.create`/`set` patterns used by Ext JS 4 and later. It has no runtime dependencies.
 
 ## Features
 
@@ -30,4 +30,4 @@ Run the parser and reference-search tests with `npm test` (Node.js 18 or newer; 
 
 ## Current scope
 
-This MVP handles the Ext JS class system and JavaScript workspaces. Reference search covers statically written names; it cannot resolve names constructed dynamically at runtime. It does not yet resolve classes from Sencha Cmd package metadata, generated framework SDK sources outside the workspace, or Ext JS 4 `Ext.ClassManager` patterns.
+This MVP handles classic Ext JS class declarations and JavaScript workspaces. Reference search covers statically written names; it cannot resolve names constructed dynamically at runtime. It does not yet resolve classes from Sencha Cmd package metadata or generated framework SDK sources outside the workspace.

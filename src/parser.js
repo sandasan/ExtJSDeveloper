@@ -142,12 +142,21 @@ function objectProperties(tokens, openIndex) {
 function scanFile(text, uri) {
   const tokens = tokenize(text);
   const declarations = [];
-  for (let i = 0; i < tokens.length - 5; i++) {
-    if (tokens[i].value !== 'Ext' || tokens[i + 1].value !== '.' || tokens[i + 2].value !== 'define' ||
-        tokens[i + 3].value !== '(' || tokens[i + 4].type !== 'string' || tokens[i + 5].value !== ',') continue;
-    const openIndex = i + 6;
-    if (tokens[openIndex]?.value !== '{') continue;
-    const properties = objectProperties(tokens, openIndex);
+  for (let i = 0; i < tokens.length; i++) {
+    let nameIndex = -1, objectIndex = -1;
+    if (tokens[i].value === 'Ext' && tokens[i + 1]?.value === '.' && tokens[i + 2]?.value === 'define' &&
+        tokens[i + 3]?.value === '(' && tokens[i + 4]?.type === 'string' && tokens[i + 5]?.value === ',') {
+      nameIndex = i + 4;
+      objectIndex = i + 6;
+    } else if (tokens[i].value === 'Ext' && tokens[i + 1]?.value === '.' && tokens[i + 2]?.value === 'ClassManager' &&
+        tokens[i + 3]?.value === '.' && ['create', 'set'].includes(tokens[i + 4]?.value) && tokens[i + 5]?.value === '(' &&
+        tokens[i + 6]?.type === 'string' && tokens[i + 7]?.value === ',') {
+      nameIndex = i + 6;
+      objectIndex = i + 8;
+    }
+    if (nameIndex < 0) continue;
+
+    const properties = tokens[objectIndex]?.value === '{' ? objectProperties(tokens, objectIndex) : [];
     const aliasesForClass = [];
     const dependencies = [];
     for (const property of properties) {
@@ -167,7 +176,7 @@ function scanFile(text, uri) {
         }
       }
     }
-    const nameToken = tokens[i + 4];
+    const nameToken = tokens[nameIndex];
     declarations.push({
       name: nameToken.value,
       aliases: [...new Set(aliasesForClass)],
