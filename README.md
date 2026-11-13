@@ -7,6 +7,7 @@ A small Visual Studio Code extension for navigating Ext JS applications. The fir
 - Go to a class definition by clicking or using **Go to Definition** on class names, `widget.*` aliases, or xtype values.
 - Find references with **Shift+F12** or **Peek References** on class names and widget aliases/xtypes.
 - Search the workspace index with **ExtJS: Open Class or xtype**.
+- Find Ext JS classes in VS Code's **Go to Symbol in Workspace** search (`Ctrl+T`), including matches by alias and xtype.
 - Browse indexed classes in the **ExtJS Classes** view in Explorer.
 - Browse class dependencies in **ExtJS Dependencies**. Expand a class to see its `extend`, `requires`, `uses`, `mixins`, `controller`, and `viewModel` links, then expand those classes to follow the graph.
 - Get class name completions in common class and view configuration values such as `requires`, `extend`, `xtype`, `controller`, and `viewModel`.

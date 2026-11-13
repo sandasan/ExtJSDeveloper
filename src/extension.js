@@ -233,6 +233,28 @@ function activate(context) {
       return target ? findReferences(target, document, referenceContext.includeDeclaration) : [];
     }
   }));
+  context.subscriptions.push(vscode.languages.registerWorkspaceSymbolProvider({
+    provideWorkspaceSymbols(query) {
+      const normalizedQuery = query.trim().toLowerCase();
+      const symbols = [];
+      for (const entry of classes.values()) {
+        const searchableText = [entry.name, ...entry.aliases].join(' ').toLowerCase();
+        if (normalizedQuery && !searchableText.includes(normalizedQuery)) continue;
+        const file = indexedFiles.get(entry.uri.toString());
+        const starts = file ? lineStartsFor(file.text) : [0];
+        const start = positionAt(starts, entry.offset);
+        const end = positionAt(starts, entry.nameEnd);
+        const namespace = entry.name.split('.').slice(0, -1).join('.');
+        symbols.push(new vscode.SymbolInformation(
+          entry.name,
+          vscode.SymbolKind.Class,
+          namespace,
+          new vscode.Location(entry.uri, new vscode.Range(start, end))
+        ));
+      }
+      return symbols;
+    }
+  }));
   context.subscriptions.push(vscode.languages.registerCompletionItemProvider({ language: 'javascript' }, {
     provideCompletionItems(document, position) {
       const line = document.lineAt(position.line).text.slice(0, position.character);
