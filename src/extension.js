@@ -7,6 +7,7 @@ const JS_FILES = '**/*.{js,jsx,mjs,cjs}';
 const classes = new Map();
 const aliases = new Map();
 const indexedFiles = new Map();
+const reverseDependencies = new Map();
 let tree;
 let dependencyTree;
 let watcher;
@@ -26,6 +27,17 @@ function replaceClassMaps(files) {
   classes.clear(); aliases.clear();
   for (const [key, value] of nextClasses) classes.set(key, value);
   for (const [key, value] of nextAliases) aliases.set(key, value);
+  reverseDependencies.clear();
+  for (const entry of classes.values()) reverseDependencies.set(entry.name, []);
+  for (const candidate of classes.values()) {
+    const seen = new Set();
+    for (const dependency of candidate.dependencies) {
+      const target = resolve(dependency.name);
+      if (!target || seen.has(target.name)) continue;
+      seen.add(target.name);
+      reverseDependencies.get(target.name)?.push(candidate);
+    }
+  }
 }
 
 function reindexDocument(document) {
@@ -60,7 +72,7 @@ function scheduleDocumentChange(document) {
 async function rebuild() {
   const version = ++rebuildVersion;
   if (!vscode.workspace.workspaceFolders) {
-    classes.clear(); aliases.clear(); indexedFiles.clear(); tree?.refresh(); dependencyTree?.refresh();
+    classes.clear(); aliases.clear(); indexedFiles.clear(); reverseDependencies.clear(); tree?.refresh(); dependencyTree?.refresh();
     return;
   }
   const excluded = vscode.workspace.getConfiguration('extjsNavigator').get('exclude', []);
@@ -184,6 +196,20 @@ function positionAt(lineStarts, offset) {
   return new vscode.Position(low, offset - lineStarts[low]);
 }
 
+function dependentsOf(entry) {
+  return reverseDependencies.get(entry.name) || [];
+}
+
+function classTreeItem(entry, ancestry = new Set([entry.name])) {
+  const dependentCount = dependentsOf(entry).length;
+  const item = new vscode.TreeItem(entry.name, entry.dependencies.length || dependentCount
+    ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
+  item.entry = entry;
+  item.ancestry = ancestry;
+  item.command = { command: 'extjsNavigator.revealEntry', title: 'Open ExtJS class', arguments: [entry] };
+  return item;
+}
+
 class ClassTreeProvider {
   constructor() { this.emitter = new vscode.EventEmitter(); this.onDidChangeTreeData = this.emitter.event; }
   refresh() { this.emitter.fire(); }
@@ -218,11 +244,11 @@ class DependencyTreeProvider {
     if (item?.children) return item.children;
     if (item?.entry) {
       const ancestry = item.ancestry || new Set();
-      return item.entry.dependencies.map(dependency => {
+      const dependencies = item.entry.dependencies.map(dependency => {
         const resolved = resolve(dependency.name);
         const circular = resolved && ancestry.has(resolved.name);
         const label = resolved ? resolved.name : dependency.name;
-        const child = new vscode.TreeItem(label, resolved && !circular && resolved.dependencies.length
+        const child = new vscode.TreeItem(label, resolved && !circular && (resolved.dependencies.length || dependentsOf(resolved).length)
           ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
         child.description = `${dependency.kind}${resolved ? '' : ' · outside index'}${circular ? ' · cycle' : ''}`;
         child.entry = circular ? undefined : resolved;
@@ -230,6 +256,24 @@ class DependencyTreeProvider {
         if (resolved) child.command = { command: 'extjsNavigator.revealEntry', title: 'Open ExtJS class', arguments: [resolved] };
         return child;
       });
+      const dependents = dependentsOf(item.entry);
+      if (!dependents.length) return dependencies;
+      const circularDependents = dependents.filter(entry => ancestry.has(entry.name));
+      const usedBy = new vscode.TreeItem(`Used by (${dependents.length})`, vscode.TreeItemCollapsibleState.Collapsed);
+      usedBy.children = dependents.map(entry => {
+        const circular = ancestry.has(entry.name);
+        const child = classTreeItem(entry, new Set([...ancestry, entry.name]));
+        const kinds = [...new Set(entry.dependencies.filter(dependency => resolve(dependency.name) === item.entry).map(dependency => dependency.kind))];
+        child.description = `${kinds.join(', ')}${circular ? ' · cycle' : ''}`;
+        if (circular) {
+          child.collapsibleState = vscode.TreeItemCollapsibleState.None;
+          child.entry = undefined;
+          child.command = undefined;
+        }
+        return child;
+      });
+      usedBy.description = circularDependents.length ? `${circularDependents.length} cycle${circularDependents.length === 1 ? '' : 's'}` : undefined;
+      return [...dependencies, usedBy];
     }
     if (item) return [];
 
@@ -242,12 +286,7 @@ class DependencyTreeProvider {
     return [...groups].sort(([a], [b]) => a.localeCompare(b)).map(([namespace, entries]) => {
       const group = new vscode.TreeItem(`${namespace} (${entries.length})`, vscode.TreeItemCollapsibleState.Collapsed);
       group.children = entries.sort((a, b) => a.name.localeCompare(b.name)).map(entry => {
-        const node = new vscode.TreeItem(entry.name, entry.dependencies.length
-          ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
-        node.entry = entry;
-        node.ancestry = new Set([entry.name]);
-        node.command = { command: 'extjsNavigator.revealEntry', title: 'Open ExtJS class', arguments: [entry] };
-        return node;
+        return classTreeItem(entry);
       });
       return group;
     });
