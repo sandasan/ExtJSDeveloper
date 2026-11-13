@@ -3,7 +3,7 @@ const path = require('path');
 const { tokenize, scanFile, findReferenceTokens } = require('./parser');
 const { resolveClassPath } = require('./project');
 const { parseVersion } = require('./project');
-const { ELEMENTS, makeClassName, createElement } = require('./generator');
+const { ELEMENTS, FUNCTIONS, makeClassName, createElement, createFunction } = require('./generator');
 
 const JS_FILES = '**/*.{js,jsx,mjs,cjs}';
 const classes = new Map();
@@ -360,6 +360,10 @@ async function generateElement() {
     validateInput: value => parseVersion(value) ? undefined : 'Enter a version such as 6.2.0.'
   });
   if (!version) return;
+  if (toolkit === 'modern' && Number.parseInt(version, 10) < 6) {
+    vscode.window.showErrorMessage('The Modern toolkit templates require Ext JS 6 or newer.');
+    return;
+  }
   const supportedElements = ELEMENTS.filter(item => item.id !== 'viewModel' || Number.parseInt(version, 10) >= 5);
   const selectedElement = await vscode.window.showQuickPick(supportedElements, { placeHolder: `Choose an Ext JS ${version} element to generate` });
   if (!selectedElement) return;
@@ -382,7 +386,9 @@ async function generateElement() {
   if (!selectedFolders?.length) return;
   const segments = className.split('.');
   const name = segments.pop();
-  const target = vscode.Uri.file(path.join(selectedFolders[0].fsPath, ...segments.slice(1), `${name}.js`));
+  const projectNamespace = typeof project.app.name === 'string' ? project.app.name : '';
+  const relativeNamespace = segments[0] === projectNamespace ? segments.slice(1) : segments;
+  const target = vscode.Uri.file(path.join(selectedFolders[0].fsPath, ...relativeNamespace, `${name}.js`));
   const create = await vscode.window.showInformationMessage(`Create ${className} at ${target.fsPath}?`, { modal: true }, 'Create');
   if (create !== 'Create') return;
   try {
@@ -397,6 +403,46 @@ async function generateElement() {
   await vscode.window.showTextDocument(document);
   vscode.window.showInformationMessage(`Generated ${selectedElement.label}: ${className} (${toolkit}, Ext JS ${version})`);
   rebuild();
+}
+
+async function insertFunction() {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || !['javascript', 'javascriptreact', 'typescript', 'typescriptreact'].includes(editor.document.languageId)) {
+    vscode.window.showInformationMessage('Open a JavaScript or TypeScript file and place the cursor at a property boundary inside an Ext.define class body.');
+    return;
+  }
+  const project = await findProjectSettings();
+  let toolkit = project.toolkit;
+  if (!toolkit) {
+    const choice = await vscode.window.showQuickPick(['classic', 'modern'], { placeHolder: 'Choose the project toolkit' });
+    if (!choice) return;
+    toolkit = choice;
+  }
+  const configuredVersion = vscode.workspace.getConfiguration('extjsNavigator').get('frameworkVersion');
+  const version = parseVersion(configuredVersion) || project.version || await vscode.window.showInputBox({
+    prompt: 'Framework version was not found locally. Enter the Ext JS version.',
+    validateInput: value => parseVersion(value) ? undefined : 'Enter a version such as 6.2.0.'
+  });
+  if (!version) return;
+  if (toolkit === 'modern' && Number.parseInt(version, 10) < 6) {
+    vscode.window.showErrorMessage('The Modern toolkit methods require Ext JS 6 or newer.');
+    return;
+  }
+  const methods = FUNCTIONS.filter(item => item.id !== 'lifecycle' || Number.parseInt(version, 10) >= 4);
+  const selected = await vscode.window.showQuickPick(methods, { placeHolder: 'Choose a method to insert into the current class' });
+  if (!selected) return;
+  let name = selected.defaultName;
+  if (name) {
+    name = await vscode.window.showInputBox({
+      prompt: 'Method name', value: name,
+      validateInput: value => /^[A-Za-z_$][\w$]*$/.test(value) ? undefined : 'Enter a valid JavaScript method name.'
+    });
+    if (!name) return;
+  }
+  const snippet = createFunction({ type: selected.id, name, toolkit, version });
+  const position = editor.selection.active;
+  const inserted = await editor.edit(edit => edit.insert(position, snippet));
+  if (inserted) vscode.window.showInformationMessage(`Inserted ${selected.label} for Ext JS ${version} (${toolkit}).`);
 }
 
 function dependentsOf(entry) {
@@ -515,6 +561,7 @@ function activate(context) {
   context.subscriptions.push(vscode.window.registerTreeDataProvider('extjsDependencies', dependencyTree));
   context.subscriptions.push(vscode.commands.registerCommand('extjsNavigator.refreshIndex', rebuild));
   context.subscriptions.push(vscode.commands.registerCommand('extjsNavigator.generateElement', generateElement));
+  context.subscriptions.push(vscode.commands.registerCommand('extjsNavigator.insertFunction', insertFunction));
   context.subscriptions.push(vscode.commands.registerCommand('extjsNavigator.revealEntry', openEntry));
   context.subscriptions.push(vscode.commands.registerCommand('extjsNavigator.openAtLocation', async (uriString, offset) => {
     const uri = vscode.Uri.parse(uriString);

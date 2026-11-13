@@ -1,8 +1,8 @@
 {
   "name": "extjs-navigator",
   "displayName": "ExtJS Navigator",
-  "description": "Navigate Ext JS classes, aliases, and xtypes in your workspace.",
-  "version": "0.3.0",
+  "description": "Navigate Ext JS classes and generate version-aware components and methods.",
+  "version": "0.4.0",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -11,17 +11,18 @@
   },
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Programming Languages", "Other"],
-  "keywords": ["ExtJS", "Ext JS", "Sencha", "xtype", "navigation"],
+  "keywords": ["ExtJS", "Ext JS", "Sencha", "xtype", "navigation", "generator", "components"],
   "main": "./src/extension.js",
   "scripts": {
     "test": "node tests/parser.test.js"
   },
-  "activationEvents": ["workspaceContains:**/*.js", "workspaceContains:**/app.json", "onView:extjsExplorer", "onView:extjsDependencies", "onCommand:extjsNavigator.refreshIndex", "onCommand:extjsNavigator.openClass", "onCommand:extjsNavigator.generateElement"],
+  "activationEvents": ["workspaceContains:**/*.js", "workspaceContains:**/app.json", "onView:extjsExplorer", "onView:extjsDependencies", "onCommand:extjsNavigator.refreshIndex", "onCommand:extjsNavigator.openClass", "onCommand:extjsNavigator.generateElement", "onCommand:extjsNavigator.insertFunction"],
   "contributes": {
     "commands": [
       { "command": "extjsNavigator.refreshIndex", "title": "ExtJS: Refresh Workspace Index" },
       { "command": "extjsNavigator.openClass", "title": "ExtJS: Open Class or xtype" },
-      { "command": "extjsNavigator.generateElement", "title": "ExtJS: Generate Element" }
+      { "command": "extjsNavigator.generateElement", "title": "ExtJS: Generate Element" },
+      { "command": "extjsNavigator.insertFunction", "title": "ExtJS: Insert Method" }
     ],
     "views": {
       "explorer": [
@@ -34,7 +35,7 @@
       "properties": {
         "extjsNavigator.exclude": { "type": "array", "default": ["**/node_modules/**", "**/build/**", "**/packages/**/build/**"], "items": { "type": "string" }, "description": "Glob patterns excluded from the ExtJS class index." },
         "extjsNavigator.sourceRoots": { "type": "array", "default": [], "items": { "type": "string" }, "description": "Additional source folders to index, relative to each workspace folder unless an absolute path is provided." },
-        "extjsNavigator.frameworkVersion": { "type": "string", "default": "", "description": "Override the Ext JS version used by the element generator when local framework metadata is unavailable or ambiguous." }
+        "extjsNavigator.frameworkVersion": { "type": "string", "default": "", "description": "Override the Ext JS version used by the component and method generators when local framework metadata is unavailable or ambiguous." }
       }
     }
   }
