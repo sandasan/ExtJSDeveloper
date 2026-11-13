@@ -398,6 +398,36 @@ function activate(context) {
       return new vscode.Location(target.uri, targetDoc.positionAt(target.offset));
     }
   }));
+  context.subscriptions.push(vscode.languages.registerHoverProvider({ language: 'javascript' }, {
+    provideHover(document, position) {
+      const word = wordAt(document, position);
+      const entry = word && resolve(word.value);
+      if (!entry) return undefined;
+
+      const markdown = new vscode.MarkdownString();
+      markdown.appendMarkdown('**Ext JS class**\n\n');
+      markdown.appendCodeblock(entry.name, 'text');
+      if (entry.aliases.length) {
+        markdown.appendMarkdown('**Aliases and xtypes**\n\n');
+        markdown.appendCodeblock(entry.aliases.join('\n'), 'text');
+      }
+      if (entry.dependencies.length) {
+        markdown.appendMarkdown('**Dependencies**\n\n');
+        markdown.appendCodeblock(entry.dependencies.map(dependency => `${dependency.kind}: ${dependency.name}`).join('\n'), 'text');
+      }
+      const file = indexedFiles.get(entry.uri.toString());
+      if (file) {
+        const line = positionAt(lineStartsFor(file.text), entry.offset).line + 1;
+        const folder = vscode.workspace.getWorkspaceFolder(entry.uri);
+        const filePath = folder ? path.relative(folder.uri.fsPath, entry.uri.fsPath) : entry.uri.fsPath;
+        markdown.appendMarkdown('**Defined in**\n\n');
+        markdown.appendCodeblock(`${filePath}:${line}`, 'text');
+      }
+      const dependentCount = dependentsOf(entry).length;
+      if (dependentCount) markdown.appendMarkdown(`Used by **${dependentCount}** indexed class${dependentCount === 1 ? '' : 'es'}.`);
+      return new vscode.Hover(markdown, word.range);
+    }
+  }));
   context.subscriptions.push(vscode.languages.registerReferenceProvider({ language: 'javascript' }, {
     provideReferences(document, position, referenceContext) {
       const word = wordAt(document, position);
