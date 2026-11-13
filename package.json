@@ -1,0 +1,30 @@
+{
+  "name": "extjs-navigator",
+  "displayName": "ExtJS Navigator",
+  "description": "Navigate Ext JS classes, aliases, and xtypes in your workspace.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sandasan/ExtJSDeveloper.git"
+  },
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages", "Other"],
+  "keywords": ["ExtJS", "Ext JS", "Sencha", "xtype", "navigation"],
+  "main": "./src/extension.js",
+  "activationEvents": ["workspaceContains:**/*.js", "onView:extjsExplorer", "onCommand:extjsNavigator.refreshIndex", "onCommand:extjsNavigator.openClass"],
+  "contributes": {
+    "commands": [
+      { "command": "extjsNavigator.refreshIndex", "title": "ExtJS: Refresh Workspace Index" },
+      { "command": "extjsNavigator.openClass", "title": "ExtJS: Open Class or xtype" }
+    ],
+    "views": { "explorer": [{ "id": "extjsExplorer", "name": "ExtJS Classes" }] },
+    "configuration": {
+      "title": "ExtJS Navigator",
+      "properties": {
+        "extjsNavigator.exclude": { "type": "array", "default": ["**/node_modules/**", "**/build/**", "**/packages/**/build/**"], "items": { "type": "string" }, "description": "Glob patterns excluded from the ExtJS class index." }
+      }
+    }
+  }
+}
