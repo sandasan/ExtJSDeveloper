@@ -16,7 +16,7 @@
   "scripts": {
     "test": "node tests/parser.test.js"
   },
-  "activationEvents": ["workspaceContains:**/*.js", "onView:extjsExplorer", "onView:extjsDependencies", "onCommand:extjsNavigator.refreshIndex", "onCommand:extjsNavigator.openClass"],
+  "activationEvents": ["workspaceContains:**/*.js", "workspaceContains:**/app.json", "onView:extjsExplorer", "onView:extjsDependencies", "onCommand:extjsNavigator.refreshIndex", "onCommand:extjsNavigator.openClass"],
   "contributes": {
     "commands": [
       { "command": "extjsNavigator.refreshIndex", "title": "ExtJS: Refresh Workspace Index" },

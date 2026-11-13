@@ -10,6 +10,7 @@ const indexedFiles = new Map();
 let tree;
 let dependencyTree;
 let watcher;
+let appConfigWatcher;
 let rebuildVersion = 0;
 
 async function rebuild() {
@@ -249,6 +250,16 @@ function activate(context) {
   watcher.onDidDelete(rebuild, null, context.subscriptions);
   watcher.onDidChange(rebuild, null, context.subscriptions);
   context.subscriptions.push(watcher);
+  // app.json classpath entries determine which folders are indexed. Keep the
+  // index in sync when projects add or change source roots.
+  appConfigWatcher = vscode.workspace.createFileSystemWatcher('**/app.json');
+  appConfigWatcher.onDidCreate(rebuild, null, context.subscriptions);
+  appConfigWatcher.onDidDelete(rebuild, null, context.subscriptions);
+  appConfigWatcher.onDidChange(rebuild, null, context.subscriptions);
+  context.subscriptions.push(appConfigWatcher);
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+    if (event.affectsConfiguration('extjsNavigator.exclude') || event.affectsConfiguration('extjsNavigator.sourceRoots')) rebuild();
+  }));
   rebuild();
 }
 
@@ -259,5 +270,5 @@ async function openEntry(entry) {
   editor.revealRange(new vscode.Range(doc.positionAt(entry.offset), doc.positionAt(entry.offset)), vscode.TextEditorRevealType.InCenter);
 }
 
-function deactivate() { watcher?.dispose(); }
+function deactivate() { watcher?.dispose(); appConfigWatcher?.dispose(); }
 module.exports = { activate, deactivate };
