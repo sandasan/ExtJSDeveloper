@@ -12,6 +12,50 @@ let dependencyTree;
 let watcher;
 let appConfigWatcher;
 let rebuildVersion = 0;
+let documentChangeTimer;
+const pendingDocuments = new Map();
+
+function replaceClassMaps(files) {
+  const nextClasses = new Map(), nextAliases = new Map();
+  for (const file of files.values()) {
+    for (const item of file.declarations) {
+      if (!nextClasses.has(item.name)) nextClasses.set(item.name, item);
+      for (const alias of item.aliases) if (!nextAliases.has(alias)) nextAliases.set(alias, item);
+    }
+  }
+  classes.clear(); aliases.clear();
+  for (const [key, value] of nextClasses) classes.set(key, value);
+  for (const [key, value] of nextAliases) aliases.set(key, value);
+}
+
+function reindexDocument(document) {
+  const key = document.uri.toString();
+  if (!indexedFiles.has(key)) return false;
+  const text = document.getText();
+  const parsed = scanFile(text, document.uri);
+  indexedFiles.set(key, { uri: document.uri, text, tokens: parsed.tokens, declarations: parsed.declarations });
+  return true;
+}
+
+function flushDocumentChanges() {
+  documentChangeTimer = undefined;
+  let changed = false;
+  for (const document of pendingDocuments.values()) {
+    if (reindexDocument(document)) changed = true;
+  }
+  pendingDocuments.clear();
+  if (changed) {
+    replaceClassMaps(indexedFiles);
+    tree?.refresh(); dependencyTree?.refresh();
+  }
+}
+
+function scheduleDocumentChange(document) {
+  if (!/\.(?:[cm]?js|jsx)$/i.test(document.uri.fsPath)) return;
+  pendingDocuments.set(document.uri.toString(), document);
+  clearTimeout(documentChangeTimer);
+  documentChangeTimer = setTimeout(flushDocumentChanges, 200);
+}
 
 async function rebuild() {
   const version = ++rebuildVersion;
@@ -26,24 +70,31 @@ async function rebuild() {
     ? await Promise.all(sourceRoots.map(root => vscode.workspace.findFiles(new vscode.RelativePattern(vscode.Uri.file(root.fsPath), JS_FILES), exclude)))
     : [await vscode.workspace.findFiles(JS_FILES, exclude)];
   const sourceFiles = [...new Map(fileGroups.flat().map(uri => [uri.toString(), uri])).values()];
-  const nextClasses = new Map(), nextAliases = new Map(), nextFiles = new Map();
+  const nextFiles = new Map();
   await Promise.all(sourceFiles.map(async uri => {
     try {
-      const bytes = await vscode.workspace.fs.readFile(uri);
-      const text = Buffer.from(bytes).toString('utf8');
+      const openDocument = vscode.workspace.textDocuments.find(document => document.uri.toString() === uri.toString());
+      const bytes = openDocument ? undefined : await vscode.workspace.fs.readFile(uri);
+      const text = openDocument ? openDocument.getText() : Buffer.from(bytes).toString('utf8');
       const parsed = scanFile(text, uri);
       nextFiles.set(uri.toString(), { uri, text, tokens: parsed.tokens, declarations: parsed.declarations });
-      for (const item of parsed.declarations) {
-        if (!nextClasses.has(item.name)) nextClasses.set(item.name, item);
-        for (const alias of item.aliases) if (!nextAliases.has(alias)) nextAliases.set(alias, item);
-      }
     } catch (_) { /* A file may have disappeared during indexing. */ }
   }));
   if (version !== rebuildVersion) return;
-  classes.clear(); aliases.clear(); indexedFiles.clear();
-  for (const [key, value] of nextClasses) classes.set(key, value);
-  for (const [key, value] of nextAliases) aliases.set(key, value);
+  // Refresh open documents again at commit time in case they changed while the
+  // asynchronous disk scan was in progress.
+  for (const document of vscode.workspace.textDocuments) {
+    const key = document.uri.toString();
+    if (!nextFiles.has(key)) continue;
+    const current = nextFiles.get(key);
+    if (current.text === document.getText()) continue;
+    const text = document.getText();
+    const parsed = scanFile(text, document.uri);
+    nextFiles.set(key, { uri: document.uri, text, tokens: parsed.tokens, declarations: parsed.declarations });
+  }
+  indexedFiles.clear();
   for (const [key, value] of nextFiles) indexedFiles.set(key, value);
+  replaceClassMaps(indexedFiles);
   tree?.refresh(); dependencyTree?.refresh();
 }
 
@@ -282,6 +333,7 @@ function activate(context) {
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
     if (event.affectsConfiguration('extjsNavigator.exclude') || event.affectsConfiguration('extjsNavigator.sourceRoots')) rebuild();
   }));
+  context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => scheduleDocumentChange(event.document)));
   rebuild();
 }
 
@@ -292,5 +344,8 @@ async function openEntry(entry) {
   editor.revealRange(new vscode.Range(doc.positionAt(entry.offset), doc.positionAt(entry.offset)), vscode.TextEditorRevealType.InCenter);
 }
 
-function deactivate() { watcher?.dispose(); appConfigWatcher?.dispose(); }
+function deactivate() {
+  clearTimeout(documentChangeTimer);
+  watcher?.dispose(); appConfigWatcher?.dispose();
+}
 module.exports = { activate, deactivate };

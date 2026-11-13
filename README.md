@@ -12,6 +12,7 @@ A small Visual Studio Code extension for navigating Ext JS applications. The fir
 - Browse class dependencies in **ExtJS Dependencies**. Expand a class to see its `extend`, `requires`, `uses`, `mixins`, `controller`, and `viewModel` links, then expand those classes to follow the graph.
 - Get class name completions in common class and view configuration values such as `requires`, `extend`, `xtype`, `controller`, and `viewModel`.
 - Rebuild the index with **ExtJS: Refresh Workspace Index**. JavaScript file changes are also indexed automatically.
+- Unsaved edits in indexed JavaScript files update class names, aliases, and dependencies automatically after a short pause while typing.
 
 The index tokenizes JavaScript before reading `Ext.define('App.view.MyPanel', { ... })` declarations, so commented-out declarations and braces inside strings, regular expressions, and nested values do not confuse the class metadata scan. It reads top-level `alias`, `xtype`, and dependency metadata and uses the same tokens to find class-name references, alias strings, xtype values, and dotted class expressions.
 
