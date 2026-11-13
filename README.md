@@ -8,6 +8,7 @@ A small Visual Studio Code extension for navigating Ext JS applications. It supp
 - Hover over a class, alias, or xtype to see its definition location, aliases, dependencies, and incoming usage count; click class, dependency, or source links to jump to code.
 - Find references with **Shift+F12** or **Peek References** on class names and widget aliases/xtypes.
 - Search the workspace index with **ExtJS: Open Class or xtype**.
+- Generate a view, grid, form, window, controller, ViewModel, model, or store with **ExtJS: Generate Element**. The generator uses the project's toolkit and locally detected Ext JS version when available; otherwise it asks for them. It writes an editable class file using built-in templates, without installing tools, downloading framework files, or invoking Sencha CMD.
 - Find Ext JS classes in VS Code's **Go to Symbol in Workspace** search (`Ctrl+T`), including matches by alias and xtype.
 - Browse indexed classes in the **ExtJS Classes** view in Explorer.
 - Browse class dependencies in **ExtJS Dependencies**. Expand a class to see its `extend`, `requires`, `uses`, `mixins`, `controller`, and `viewModel` links, then expand those classes to follow the graph.
@@ -20,6 +21,8 @@ A small Visual Studio Code extension for navigating Ext JS applications. It supp
 The index tokenizes JavaScript before reading `Ext.define('App.view.MyPanel', { ... })` and `Ext.ClassManager.create(...)` declarations, so commented-out declarations and braces inside strings, regular expressions, and nested values do not confuse the class metadata scan. It reads top-level `alias`, `xtype`, and dependency metadata, including alias and xtype values formed by concatenating string literals. Alias references are matched in `alias` properties, and xtype references in `xtype` properties or `Ext.widget(...)` calls, to avoid treating matching display text as a reference.
 
 Source folders are discovered from local `app.json` `classpath` entries. Additional paths can be set in `extjsNavigator.sourceRoots`; if no roots are found, the whole workspace is indexed. This extension does not install or invoke Sencha Cmd, download framework files, or perform license/trial checks. Framework classes appear in the dependency tree only when their source files are already available in the indexed folders.
+
+The element generator reads the toolkit from `app.json` and tries to detect the framework version from local Ext JS package metadata or source files. If detection is unavailable, choose the toolkit in the wizard and enter the version. You can set `extjsNavigator.frameworkVersion` to avoid entering it on each run. The templates are starter code maintained by this extension, not copies of framework source files.
 
 Set `extjsNavigator.exclude` to add generated or vendor paths to the exclusion list.
 

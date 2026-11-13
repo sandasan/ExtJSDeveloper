@@ -10,4 +10,19 @@ function resolveClassPath(entry, appDir, workspaceDir, toolkit) {
   return path.resolve(appDir, resolved);
 }
 
-module.exports = { resolveClassPath };
+function parseVersion(value) {
+  const match = typeof value === 'string' && value.match(/\b(\d+)\.(\d+)(?:\.(\d+))?/);
+  return match ? `${match[1]}.${match[2]}.${match[3] || '0'}` : undefined;
+}
+
+function detectFrameworkVersion(app, packageFiles = []) {
+  const direct = parseVersion(app?.frameworkVersion);
+  if (direct) return direct;
+  for (const file of packageFiles) {
+    const parsed = parseVersion(file?.version) || parseVersion(file?.frameworkVersion);
+    if (parsed) return parsed;
+  }
+  return undefined;
+}
+
+module.exports = { resolveClassPath, parseVersion, detectFrameworkVersion };

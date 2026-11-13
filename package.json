@@ -16,11 +16,12 @@
   "scripts": {
     "test": "node tests/parser.test.js"
   },
-  "activationEvents": ["workspaceContains:**/*.js", "workspaceContains:**/app.json", "onView:extjsExplorer", "onView:extjsDependencies", "onCommand:extjsNavigator.refreshIndex", "onCommand:extjsNavigator.openClass"],
+  "activationEvents": ["workspaceContains:**/*.js", "workspaceContains:**/app.json", "onView:extjsExplorer", "onView:extjsDependencies", "onCommand:extjsNavigator.refreshIndex", "onCommand:extjsNavigator.openClass", "onCommand:extjsNavigator.generateElement"],
   "contributes": {
     "commands": [
       { "command": "extjsNavigator.refreshIndex", "title": "ExtJS: Refresh Workspace Index" },
-      { "command": "extjsNavigator.openClass", "title": "ExtJS: Open Class or xtype" }
+      { "command": "extjsNavigator.openClass", "title": "ExtJS: Open Class or xtype" },
+      { "command": "extjsNavigator.generateElement", "title": "ExtJS: Generate Element" }
     ],
     "views": {
       "explorer": [
@@ -32,7 +33,8 @@
       "title": "ExtJS Navigator",
       "properties": {
         "extjsNavigator.exclude": { "type": "array", "default": ["**/node_modules/**", "**/build/**", "**/packages/**/build/**"], "items": { "type": "string" }, "description": "Glob patterns excluded from the ExtJS class index." },
-        "extjsNavigator.sourceRoots": { "type": "array", "default": [], "items": { "type": "string" }, "description": "Additional source folders to index, relative to each workspace folder unless an absolute path is provided." }
+        "extjsNavigator.sourceRoots": { "type": "array", "default": [], "items": { "type": "string" }, "description": "Additional source folders to index, relative to each workspace folder unless an absolute path is provided." },
+        "extjsNavigator.frameworkVersion": { "type": "string", "default": "", "description": "Override the Ext JS version used by the element generator when local framework metadata is unavailable or ambiguous." }
       }
     }
   }

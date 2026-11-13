@@ -2,6 +2,8 @@ const vscode = require('vscode');
 const path = require('path');
 const { tokenize, scanFile, findReferenceTokens } = require('./parser');
 const { resolveClassPath } = require('./project');
+const { parseVersion } = require('./project');
+const { ELEMENTS, makeClassName, createElement } = require('./generator');
 
 const JS_FILES = '**/*.{js,jsx,mjs,cjs}';
 const classes = new Map();
@@ -278,6 +280,125 @@ function positionAt(lineStarts, offset) {
   return new vscode.Position(low, offset - lineStarts[low]);
 }
 
+async function findProjectSettings() {
+  const folders = vscode.workspace.workspaceFolders || [];
+  const appUris = await vscode.workspace.findFiles('**/app.json', '**/{node_modules,build}/**');
+  appUris.sort((a, b) => a.fsPath.length - b.fsPath.length);
+  let app = {};
+  let appDir = folders[0]?.uri.fsPath;
+  if (appUris.length) {
+    try {
+      const uri = appUris[0];
+      app = JSON.parse(Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8'));
+      appDir = path.dirname(uri.fsPath);
+    } catch (_) { /* Fall back to workspace defaults for malformed app.json. */ }
+  }
+  const toolkitValue = typeof app.toolkit === 'string' ? app.toolkit : app.toolkit?.name;
+  const toolkit = /modern/i.test(toolkitValue || '') ? 'modern' : /classic/i.test(toolkitValue || '') ? 'classic' : undefined;
+  const directVersion = parseVersion(app.frameworkVersion);
+  if (directVersion) return { app, appDir, toolkit, version: directVersion };
+
+  const candidates = new Set();
+  const add = (base, relative) => candidates.add(path.resolve(base, relative));
+  for (const folder of folders) {
+    add(folder.uri.fsPath, 'ext/package.json');
+    add(folder.uri.fsPath, 'packages/ext/package.json');
+    add(folder.uri.fsPath, 'framework/package.json');
+    add(folder.uri.fsPath, 'ext/src/Version.js');
+    add(folder.uri.fsPath, 'ext/classic/src/Version.js');
+    add(folder.uri.fsPath, 'ext/modern/src/Version.js');
+  }
+  if (appDir) {
+    const workspace = folders.find(folder => isWithin(folder.uri.fsPath, appDir));
+    const toolkitName = toolkit || 'classic';
+    for (const entry of (Array.isArray(app.classpath) ? app.classpath : [])) {
+      const root = resolveClassPath(entry, appDir, workspace?.uri.fsPath, toolkitName);
+      if (root) {
+        add(root, 'package.json');
+        add(root, 'src/Version.js');
+        add(root, 'classic/src/Version.js');
+        add(root, 'modern/src/Version.js');
+      }
+    }
+  }
+  for (const filePath of candidates) {
+    try {
+      const content = Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.file(filePath))).toString('utf8');
+      if (filePath.endsWith('.json')) {
+        const metadata = JSON.parse(content);
+        const packageName = typeof metadata.name === 'string' ? metadata.name : '';
+        const isFrameworkPackage = packageName === 'ext' || packageName.startsWith('@sencha/ext');
+        const version = isFrameworkPackage ? (parseVersion(metadata.version) || parseVersion(metadata.frameworkVersion)) : undefined;
+        if (version) return { app, appDir, toolkit, version };
+      } else {
+        const match = content.match(/(?:version\s*[:=]\s*|new\s+Ext\.Version\s*\(\s*)['"](\d+\.\d+(?:\.\d+)?)/i);
+        if (match) return { app, appDir, toolkit, version: parseVersion(match[1]) };
+      }
+    } catch (_) { /* Local framework files are optional. */ }
+  }
+  return { app, appDir, toolkit, version: undefined };
+}
+
+async function generateElement() {
+  if (!vscode.workspace.workspaceFolders?.length) {
+    vscode.window.showInformationMessage('Open an Ext JS project folder before generating an element.');
+    return;
+  }
+  const project = await findProjectSettings();
+  const toolkitItems = ['classic', 'modern'].map(value => ({ label: value, description: value === project.toolkit ? 'Detected in app.json' : undefined, value }));
+  const selectedToolkit = await vscode.window.showQuickPick(toolkitItems, {
+    placeHolder: 'Choose toolkit',
+    activeItem: toolkitItems.find(item => item.value === project.toolkit),
+    ...(project.toolkit ? { canPickMany: false } : {})
+  });
+  if (!selectedToolkit) return;
+  const toolkit = selectedToolkit.value;
+  const configuredVersion = vscode.workspace.getConfiguration('extjsNavigator').get('frameworkVersion');
+  const version = parseVersion(configuredVersion) || project.version || await vscode.window.showInputBox({
+    prompt: 'Framework version was not found locally. Enter the Ext JS version (for example 6.2.0).',
+    value: '',
+    validateInput: value => parseVersion(value) ? undefined : 'Enter a version such as 6.2.0.'
+  });
+  if (!version) return;
+  const supportedElements = ELEMENTS.filter(item => item.id !== 'viewModel' || Number.parseInt(version, 10) >= 5);
+  const selectedElement = await vscode.window.showQuickPick(supportedElements, { placeHolder: `Choose an Ext JS ${version} element to generate` });
+  if (!selectedElement) return;
+  const namespace = project.app.name || 'App';
+  const enteredName = await vscode.window.showInputBox({
+    prompt: 'Enter the class name (fully qualified, or a short name under the detected app namespace).',
+    placeHolder: `${namespace}.view.CustomerGrid`
+  });
+  if (!enteredName) return;
+  const className = enteredName.includes('.') ? enteredName : makeClassName(namespace, enteredName);
+  if (!/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(className)) {
+    vscode.window.showErrorMessage('Use a JavaScript class name such as App.view.CustomerGrid.');
+    return;
+  }
+  const defaultFolder = project.appDir || vscode.workspace.workspaceFolders[0].uri.fsPath;
+  const selectedFolders = await vscode.window.showOpenDialog({
+    canSelectFiles: false, canSelectFolders: true, canSelectMany: false,
+    openLabel: 'Generate here', defaultUri: vscode.Uri.file(defaultFolder)
+  });
+  if (!selectedFolders?.length) return;
+  const segments = className.split('.');
+  const name = segments.pop();
+  const target = vscode.Uri.file(path.join(selectedFolders[0].fsPath, ...segments.slice(1), `${name}.js`));
+  const create = await vscode.window.showInformationMessage(`Create ${className} at ${target.fsPath}?`, { modal: true }, 'Create');
+  if (create !== 'Create') return;
+  try {
+    await vscode.workspace.fs.stat(target);
+    const overwrite = await vscode.window.showWarningMessage(`File already exists: ${target.fsPath}`, { modal: true }, 'Overwrite');
+    if (overwrite !== 'Overwrite') return;
+  } catch (_) { /* Expected when the destination does not exist. */ }
+  const content = createElement({ type: selectedElement.id, className, toolkit, version });
+  await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(target.fsPath)));
+  await vscode.workspace.fs.writeFile(target, Buffer.from(content, 'utf8'));
+  const document = await vscode.workspace.openTextDocument(target);
+  await vscode.window.showTextDocument(document);
+  vscode.window.showInformationMessage(`Generated ${selectedElement.label}: ${className} (${toolkit}, Ext JS ${version})`);
+  rebuild();
+}
+
 function dependentsOf(entry) {
   return reverseDependencies.get(entry.name) || [];
 }
@@ -393,6 +514,7 @@ function activate(context) {
   context.subscriptions.push(vscode.window.registerTreeDataProvider('extjsExplorer', tree));
   context.subscriptions.push(vscode.window.registerTreeDataProvider('extjsDependencies', dependencyTree));
   context.subscriptions.push(vscode.commands.registerCommand('extjsNavigator.refreshIndex', rebuild));
+  context.subscriptions.push(vscode.commands.registerCommand('extjsNavigator.generateElement', generateElement));
   context.subscriptions.push(vscode.commands.registerCommand('extjsNavigator.revealEntry', openEntry));
   context.subscriptions.push(vscode.commands.registerCommand('extjsNavigator.openAtLocation', async (uriString, offset) => {
     const uri = vscode.Uri.parse(uriString);
