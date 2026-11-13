@@ -8,12 +8,15 @@ const classes = new Map();
 const aliases = new Map();
 const indexedFiles = new Map();
 const reverseDependencies = new Map();
+const projectNamespaces = new Set();
+const similarityCache = new Map();
 let tree;
 let dependencyTree;
 let watcher;
 let appConfigWatcher;
 let rebuildVersion = 0;
 let documentChangeTimer;
+let diagnosticCollection;
 const pendingDocuments = new Map();
 
 function replaceClassMaps(files) {
@@ -27,6 +30,8 @@ function replaceClassMaps(files) {
   classes.clear(); aliases.clear();
   for (const [key, value] of nextClasses) classes.set(key, value);
   for (const [key, value] of nextAliases) aliases.set(key, value);
+  projectNamespaces.clear(); similarityCache.clear();
+  for (const entry of classes.values()) projectNamespaces.add(entry.name.split('.')[0]);
   reverseDependencies.clear();
   for (const entry of classes.values()) reverseDependencies.set(entry.name, []);
   for (const candidate of classes.values()) {
@@ -38,6 +43,7 @@ function replaceClassMaps(files) {
       reverseDependencies.get(target.name)?.push(candidate);
     }
   }
+  refreshDiagnostics();
 }
 
 function reindexDocument(document) {
@@ -45,7 +51,7 @@ function reindexDocument(document) {
   if (!indexedFiles.has(key)) return false;
   const text = document.getText();
   const parsed = scanFile(text, document.uri);
-  indexedFiles.set(key, { uri: document.uri, text, tokens: parsed.tokens, declarations: parsed.declarations });
+  indexedFiles.set(key, { uri: document.uri, text, tokens: parsed.tokens, declarations: parsed.declarations, references: parsed.references });
   return true;
 }
 
@@ -69,10 +75,86 @@ function scheduleDocumentChange(document) {
   documentChangeTimer = setTimeout(flushDocumentChanges, 200);
 }
 
+function editDistance(left, right) {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let row = 1; row <= left.length; row++) {
+    let diagonal = previous[0];
+    previous[0] = row;
+    for (let column = 1; column <= right.length; column++) {
+      const above = previous[column];
+      previous[column] = Math.min(previous[column] + 1, previous[column - 1] + 1,
+        diagonal + (left[row - 1] === right[column - 1] ? 0 : 1));
+      diagonal = above;
+    }
+  }
+  return previous[right.length];
+}
+
+function similarClasses(reference) {
+  const cacheKey = `${reference.kind}:${reference.name}`;
+  if (similarityCache.has(cacheKey)) return similarityCache.get(cacheKey);
+  const candidates = new Map();
+  if (reference.kind === 'xtype') {
+    for (const entry of classes.values()) {
+      for (const alias of entry.aliases) {
+        if (alias.startsWith('widget.')) candidates.set(alias.slice('widget.'.length), alias.slice('widget.'.length));
+      }
+    }
+  } else {
+    for (const entry of classes.values()) candidates.set(entry.name, entry.name);
+  }
+  const target = reference.name.toLowerCase();
+  const limit = Math.max(1, Math.min(3, Math.floor(target.length * 0.2)));
+  const candidateValues = [...candidates.values()];
+  const namespace = reference.name.split('.')[0];
+  const scopedCandidates = reference.kind !== 'xtype' && reference.name.includes('.')
+    ? candidateValues.filter(value => value.split('.')[0] === namespace)
+    : candidateValues;
+  const suggestions = scopedCandidates.map(value => ({ value, distance: editDistance(target, value.toLowerCase()) }))
+    .filter(candidate => candidate.distance > 0 && candidate.distance <= limit)
+    .sort((a, b) => a.distance - b.distance || a.value.localeCompare(b.value))
+    .slice(0, 3);
+  similarityCache.set(cacheKey, suggestions);
+  return suggestions;
+}
+
+function refreshDiagnostics() {
+  if (!diagnosticCollection) return;
+  diagnosticCollection.clear();
+  for (const file of indexedFiles.values()) {
+    const starts = lineStartsFor(file.text);
+    const fileDiagnostics = [];
+    const seenRanges = new Set();
+    for (const reference of file.references || []) {
+      const target = reference.kind === 'xtype' ? resolve(`widget.${reference.name}`) : resolve(reference.name);
+      if (target) continue;
+      const suggestions = similarClasses(reference);
+      const namespace = reference.name.split('.')[0];
+      const knownNamespace = reference.kind !== 'xtype' && projectNamespaces.has(namespace);
+      if (!knownNamespace && !suggestions.length) continue;
+      const rangeKey = `${reference.start}:${reference.end}`;
+      if (seenRanges.has(rangeKey)) continue;
+      seenRanges.add(rangeKey);
+      const range = new vscode.Range(positionAt(starts, reference.start), positionAt(starts, reference.end));
+      const diagnostic = new vscode.Diagnostic(
+        range,
+        `Cannot resolve ExtJS ${reference.kind} "${reference.name}" in the current workspace index.`,
+        vscode.DiagnosticSeverity.Information
+      );
+      diagnostic.source = 'ExtJS Navigator';
+      diagnostic.code = 'extjsNavigator.unresolved';
+      fileDiagnostics.push(diagnostic);
+    }
+    diagnosticCollection.set(file.uri, fileDiagnostics);
+  }
+}
+
 async function rebuild() {
   const version = ++rebuildVersion;
   if (!vscode.workspace.workspaceFolders) {
-    classes.clear(); aliases.clear(); indexedFiles.clear(); reverseDependencies.clear(); tree?.refresh(); dependencyTree?.refresh();
+    classes.clear(); aliases.clear(); indexedFiles.clear(); reverseDependencies.clear(); projectNamespaces.clear(); similarityCache.clear();
+    tree?.refresh(); dependencyTree?.refresh();
+    diagnosticCollection?.clear();
     return;
   }
   const excluded = vscode.workspace.getConfiguration('extjsNavigator').get('exclude', []);
@@ -89,7 +171,7 @@ async function rebuild() {
       const bytes = openDocument ? undefined : await vscode.workspace.fs.readFile(uri);
       const text = openDocument ? openDocument.getText() : Buffer.from(bytes).toString('utf8');
       const parsed = scanFile(text, uri);
-      nextFiles.set(uri.toString(), { uri, text, tokens: parsed.tokens, declarations: parsed.declarations });
+      nextFiles.set(uri.toString(), { uri, text, tokens: parsed.tokens, declarations: parsed.declarations, references: parsed.references });
     } catch (_) { /* A file may have disappeared during indexing. */ }
   }));
   if (version !== rebuildVersion) return;
@@ -102,7 +184,7 @@ async function rebuild() {
     if (current.text === document.getText()) continue;
     const text = document.getText();
     const parsed = scanFile(text, document.uri);
-    nextFiles.set(key, { uri: document.uri, text, tokens: parsed.tokens, declarations: parsed.declarations });
+    nextFiles.set(key, { uri: document.uri, text, tokens: parsed.tokens, declarations: parsed.declarations, references: parsed.references });
   }
   indexedFiles.clear();
   for (const [key, value] of nextFiles) indexedFiles.set(key, value);
@@ -323,6 +405,40 @@ function activate(context) {
       return target ? findReferences(target, document, referenceContext.includeDeclaration) : [];
     }
   }));
+  diagnosticCollection = vscode.languages.createDiagnosticCollection('extjsNavigator');
+  context.subscriptions.push(diagnosticCollection);
+  context.subscriptions.push(vscode.languages.registerCodeActionsProvider({ language: 'javascript' }, {
+    provideCodeActions(document, range, actionContext) {
+      const file = indexedFiles.get(document.uri.toString());
+      if (!file) return [];
+      const actions = [];
+      for (const diagnostic of actionContext.diagnostics) {
+        if (diagnostic.code !== 'extjsNavigator.unresolved') continue;
+        const start = document.offsetAt(diagnostic.range.start);
+        const end = document.offsetAt(diagnostic.range.end);
+        const reference = (file.references || []).find(item => item.start === start && item.end === end);
+        if (!reference) continue;
+
+        const configure = new vscode.CodeAction('Configure ExtJS source roots…', vscode.CodeActionKind.QuickFix);
+        configure.diagnostics = [diagnostic];
+        configure.command = {
+          command: 'workbench.action.openSettings',
+          title: 'Open ExtJS source root settings',
+          arguments: ['@extjsNavigator.sourceRoots']
+        };
+        actions.push(configure);
+
+        for (const suggestion of similarClasses(reference)) {
+          const replace = new vscode.CodeAction(`Replace with "${suggestion.value}"`, vscode.CodeActionKind.QuickFix);
+          replace.diagnostics = [diagnostic];
+          replace.edit = new vscode.WorkspaceEdit();
+          replace.edit.replace(document.uri, diagnostic.range, JSON.stringify(suggestion.value));
+          actions.push(replace);
+        }
+      }
+      return actions;
+    }
+  }, { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] }));
   context.subscriptions.push(vscode.languages.registerWorkspaceSymbolProvider({
     provideWorkspaceSymbols(query) {
       const normalizedQuery = query.trim().toLowerCase();

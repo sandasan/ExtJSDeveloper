@@ -149,34 +149,40 @@ function staticStringValue(tokens) {
   return value;
 }
 
-function staticStringValues(tokens) {
+function staticStringEntries(tokens) {
   if (tokens[0]?.value !== '[') {
     const value = staticStringValue(tokens);
-    return value === undefined ? [] : [value];
+    return value === undefined ? [] : [{ value, start: tokens[0].start, end: tokens[tokens.length - 1].end }];
   }
   const closeIndex = matchingToken(tokens, 0);
   if (closeIndex !== tokens.length - 1) return [];
-  const values = [];
+  const entries = [];
   let segmentStart = 1;
   for (let i = 1; i <= closeIndex; i++) {
     if (i < closeIndex && ['{', '[', '('].includes(tokens[i].value)) {
       const nestedClose = matchingToken(tokens, i);
-      if (nestedClose < 0) return values;
+      if (nestedClose < 0) return entries;
       i = nestedClose;
       continue;
     }
     if (i === closeIndex || tokens[i].value === ',') {
-      const value = staticStringValue(tokens.slice(segmentStart, i));
-      if (value !== undefined) values.push(value);
+      const segment = tokens.slice(segmentStart, i);
+      const value = staticStringValue(segment);
+      if (value !== undefined) entries.push({ value, start: segment[0].start, end: segment[segment.length - 1].end });
       segmentStart = i + 1;
     }
   }
-  return values;
+  return entries;
+}
+
+function staticStringValues(tokens) {
+  return staticStringEntries(tokens).map(entry => entry.value);
 }
 
 function scanFile(text, uri) {
   const tokens = tokenize(text);
   const declarations = [];
+  const references = [];
   for (let i = 0; i < tokens.length; i++) {
     let nameIndex = -1, objectIndex = -1;
     if (tokens[i].value === 'Ext' && tokens[i + 1]?.value === '.' && tokens[i + 2]?.value === 'define' &&
@@ -208,7 +214,10 @@ function scanFile(text, uri) {
       })[property.key];
       if (dependencyKind) {
         for (const dependency of property.value) {
-          if (dependency.type === 'string' && dependency.value) dependencies.push({ name: dependency.value, kind: dependencyKind });
+          if (dependency.type === 'string' && dependency.value) {
+            dependencies.push({ name: dependency.value, kind: dependencyKind });
+            references.push({ name: dependency.value, kind: dependencyKind, start: dependency.start, end: dependency.end });
+          }
         }
       }
     }
@@ -222,7 +231,34 @@ function scanFile(text, uri) {
       nameEnd: nameToken.valueEnd
     });
   }
-  return { declarations, tokens };
+
+  const nesting = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    const isXtypeKey = (token.type === 'identifier' || token.type === 'string') && token.value === 'xtype';
+    if (isXtypeKey && tokens[i + 1]?.value === ':' && nesting[nesting.length - 1]?.value === '{' &&
+        ['{', ','].includes(tokens[i - 1]?.value)) {
+      const valueStart = i + 2;
+      let valueEnd = valueStart;
+      while (valueEnd < tokens.length) {
+        const value = tokens[valueEnd].value;
+        if (['{', '[', '('].includes(value)) {
+          const close = matchingToken(tokens, valueEnd);
+          if (close < 0) break;
+          valueEnd = close + 1;
+          continue;
+        }
+        if ([',', '}', ')', ']'].includes(value)) break;
+        valueEnd++;
+      }
+      for (const entry of staticStringEntries(tokens.slice(valueStart, valueEnd))) {
+        references.push({ name: entry.value, kind: 'xtype', start: entry.start, end: entry.end });
+      }
+    }
+    if (['{', '[', '('].includes(token.value)) nesting.push({ value: token.value, index: i });
+    else if (['}', ']', ')'].includes(token.value)) nesting.pop();
+  }
+  return { declarations, references, tokens };
 }
 
 function propertyAt(tokens, index) {
