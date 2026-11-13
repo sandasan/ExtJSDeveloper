@@ -14,7 +14,7 @@ A small Visual Studio Code extension for navigating Ext JS applications. It supp
 - Rebuild the index with **ExtJS: Refresh Workspace Index**. JavaScript file changes are also indexed automatically.
 - Unsaved edits in indexed JavaScript files update class names, aliases, and dependencies automatically after a short pause while typing.
 
-The index tokenizes JavaScript before reading `Ext.define('App.view.MyPanel', { ... })` declarations, so commented-out declarations and braces inside strings, regular expressions, and nested values do not confuse the class metadata scan. It reads top-level `alias`, `xtype`, and dependency metadata and uses the same tokens to find class-name references, alias strings, xtype values, and dotted class expressions.
+The index tokenizes JavaScript before reading `Ext.define('App.view.MyPanel', { ... })` and `Ext.ClassManager.create(...)` declarations, so commented-out declarations and braces inside strings, regular expressions, and nested values do not confuse the class metadata scan. It reads top-level `alias`, `xtype`, and dependency metadata, including alias and xtype values formed by concatenating string literals. Alias references are matched in `alias` properties, and xtype references in `xtype` properties or `Ext.widget(...)` calls, to avoid treating matching display text as a reference.
 
 Source folders are discovered from local `app.json` `classpath` entries. Additional paths can be set in `extjsNavigator.sourceRoots`; if no roots are found, the whole workspace is indexed. This extension does not install or invoke Sencha Cmd, download framework files, or perform license/trial checks. Framework classes appear in the dependency tree only when their source files are already available in the indexed folders.
 

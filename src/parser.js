@@ -107,7 +107,7 @@ function objectProperties(tokens, openIndex) {
   const addProperty = (start, end) => {
     const first = tokens[start], second = tokens[start + 1];
     if ((first?.type === 'identifier' || first?.type === 'string') && second?.value === ':') {
-      properties.push({ key: first.value, value: tokens.slice(start + 2, end) });
+      properties.push({ key: first.value, value: tokens.slice(start + 2, end), valueStart: start + 2, valueEnd: end });
     }
   };
   let segmentStart = openIndex + 1;
@@ -139,6 +139,41 @@ function objectProperties(tokens, openIndex) {
   return properties;
 }
 
+function staticStringValue(tokens) {
+  if (!tokens.length || tokens[0].type !== 'string') return undefined;
+  let value = tokens[0].value;
+  for (let i = 1; i < tokens.length; i += 2) {
+    if (tokens[i]?.value !== '+' || tokens[i + 1]?.type !== 'string') return undefined;
+    value += tokens[i + 1].value;
+  }
+  return value;
+}
+
+function staticStringValues(tokens) {
+  if (tokens[0]?.value !== '[') {
+    const value = staticStringValue(tokens);
+    return value === undefined ? [] : [value];
+  }
+  const closeIndex = matchingToken(tokens, 0);
+  if (closeIndex !== tokens.length - 1) return [];
+  const values = [];
+  let segmentStart = 1;
+  for (let i = 1; i <= closeIndex; i++) {
+    if (i < closeIndex && ['{', '[', '('].includes(tokens[i].value)) {
+      const nestedClose = matchingToken(tokens, i);
+      if (nestedClose < 0) return values;
+      i = nestedClose;
+      continue;
+    }
+    if (i === closeIndex || tokens[i].value === ',') {
+      const value = staticStringValue(tokens.slice(segmentStart, i));
+      if (value !== undefined) values.push(value);
+      segmentStart = i + 1;
+    }
+  }
+  return values;
+}
+
 function scanFile(text, uri) {
   const tokens = tokenize(text);
   const declarations = [];
@@ -160,11 +195,12 @@ function scanFile(text, uri) {
     const aliasesForClass = [];
     const dependencies = [];
     for (const property of properties) {
-      if (property.key === 'alias' && (property.value[0]?.type === 'string' || property.value[0]?.value === '[')) {
-        aliasesForClass.push(...property.value.filter(token => token.type === 'string').map(token => token.value));
+      if (property.key === 'alias') {
+        aliasesForClass.push(...staticStringValues(property.value));
       }
-      if (property.key === 'xtype' && property.value[0]?.type === 'string') {
-        aliasesForClass.push(`widget.${property.value[0].value}`);
+      if (property.key === 'xtype') {
+        const xtype = staticStringValue(property.value);
+        if (xtype !== undefined) aliasesForClass.push(`widget.${xtype}`);
       }
       const dependencyKind = ({
         extend: 'extends', requires: 'requires', uses: 'uses', mixins: 'mixins',
@@ -189,12 +225,24 @@ function scanFile(text, uri) {
   return { declarations, tokens };
 }
 
-function isXtypeValue(tokens, index) {
-  for (let i = Math.max(0, index - 32); i < index; i++) {
-    if (tokens[i].value !== ':' || tokens[i - 1]?.value !== 'xtype') continue;
-    if (i + 1 === index) return true;
-    if (tokens[i + 1]?.value === '[' && matchingToken(tokens, i + 1) > index) return true;
+function propertyAt(tokens, index) {
+  let innermostOpen = -1, containingProperty;
+  for (let i = 0; i < index; i++) {
+    if (tokens[i].value !== '{') continue;
+    const closeIndex = matchingToken(tokens, i);
+    if (closeIndex <= index || i < innermostOpen) continue;
+    const property = objectProperties(tokens, i).find(candidate => candidate.valueStart <= index && index < candidate.valueEnd);
+    if (property) {
+      innermostOpen = i;
+      containingProperty = property;
+    }
   }
+  return containingProperty;
+}
+
+function isXtypeValue(tokens, index) {
+  const property = propertyAt(tokens, index);
+  if (property?.key === 'xtype') return true;
   return tokens[index - 1]?.value === '(' && tokens[index - 2]?.value === 'widget' && tokens[index - 3]?.value === '.';
 }
 
@@ -204,7 +252,10 @@ function findReferenceTokens(target, tokens, fileUri, includeDeclaration = false
   const references = [];
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
-    let matches = token.type === 'string' && (token.value === target.name || targetAliases.has(token.value));
+    let matches = token.type === 'string' && token.value === target.name;
+    if (!matches && token.type === 'string' && targetAliases.has(token.value)) {
+      matches = propertyAt(tokens, i)?.key === 'alias';
+    }
     if (!matches && token.type === 'string' && widgetXtypes.includes(token.value)) matches = isXtypeValue(tokens, i);
     if (matches && !includeDeclaration && fileUri === target.uri && token.valueStart === target.offset) continue;
     if (token.type === 'identifier') {
