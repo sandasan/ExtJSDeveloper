@@ -2,7 +2,7 @@
   "name": "extjs-navigator",
   "displayName": "ExtJS Navigator",
   "description": "Navigate Ext JS classes, aliases, and xtypes in your workspace.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -16,17 +16,23 @@
   "scripts": {
     "test": "node tests/parser.test.js"
   },
-  "activationEvents": ["workspaceContains:**/*.js", "onView:extjsExplorer", "onCommand:extjsNavigator.refreshIndex", "onCommand:extjsNavigator.openClass"],
+  "activationEvents": ["workspaceContains:**/*.js", "onView:extjsExplorer", "onView:extjsDependencies", "onCommand:extjsNavigator.refreshIndex", "onCommand:extjsNavigator.openClass"],
   "contributes": {
     "commands": [
       { "command": "extjsNavigator.refreshIndex", "title": "ExtJS: Refresh Workspace Index" },
       { "command": "extjsNavigator.openClass", "title": "ExtJS: Open Class or xtype" }
     ],
-    "views": { "explorer": [{ "id": "extjsExplorer", "name": "ExtJS Classes" }] },
+    "views": {
+      "explorer": [
+        { "id": "extjsExplorer", "name": "ExtJS Classes" },
+        { "id": "extjsDependencies", "name": "ExtJS Dependencies" }
+      ]
+    },
     "configuration": {
       "title": "ExtJS Navigator",
       "properties": {
-        "extjsNavigator.exclude": { "type": "array", "default": ["**/node_modules/**", "**/build/**", "**/packages/**/build/**"], "items": { "type": "string" }, "description": "Glob patterns excluded from the ExtJS class index." }
+        "extjsNavigator.exclude": { "type": "array", "default": ["**/node_modules/**", "**/build/**", "**/packages/**/build/**"], "items": { "type": "string" }, "description": "Glob patterns excluded from the ExtJS class index." },
+        "extjsNavigator.sourceRoots": { "type": "array", "default": [], "items": { "type": "string" }, "description": "Additional source folders to index, relative to each workspace folder unless an absolute path is provided." }
       }
     }
   }

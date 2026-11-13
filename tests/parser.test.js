@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { scanFile, tokenize, findReferenceTokens } = require('../src/parser');
+const { resolveClassPath } = require('../src/project');
 
 test('indexes top-level Ext.define metadata and ignores nested configuration', () => {
   const source = `
@@ -23,6 +24,36 @@ test('indexes top-level Ext.define metadata and ignores nested configuration', (
   assert.equal(declarations[0].name, 'Demo.view.Panel');
   assert.equal(declarations[1].name, 'Demo.view.Other');
   assert.equal(source.slice(declarations[0].offset, declarations[0].nameEnd), declarations[0].name);
+});
+
+test('extracts static class dependencies without taking values from nested configs', () => {
+  const source = `Ext.define('Demo.view.Panel', {
+    extend: 'Ext.panel.Panel',
+    requires: ['Demo.data.Store', 'Demo.util.Formatter'],
+    uses: ['Demo.view.Help'],
+    mixins: { observable: 'Ext.mixin.Observable' },
+    controller: 'Demo.view.PanelController',
+    viewModel: { type: 'Demo.view.PanelModel' },
+    config: { requires: ['Demo.fake.Dependency'] }
+  });`;
+  const { declarations } = scanFile(source, 'file:///app/Panel.js');
+  assert.deepEqual(declarations[0].dependencies, [
+    { name: 'Ext.panel.Panel', kind: 'extends' },
+    { name: 'Demo.data.Store', kind: 'requires' },
+    { name: 'Demo.util.Formatter', kind: 'requires' },
+    { name: 'Demo.view.Help', kind: 'uses' },
+    { name: 'Ext.mixin.Observable', kind: 'mixins' },
+    { name: 'Demo.view.PanelController', kind: 'controller' },
+    { name: 'Demo.view.PanelModel', kind: 'viewModel' }
+  ]);
+});
+
+test('resolves app.json classpath entries without invoking external tooling', () => {
+  assert.equal(resolveClassPath('app', '/project', '/workspace', 'classic'), '/project/app');
+  assert.equal(resolveClassPath('${toolkit.name}/src', '/project', '/workspace', 'modern'), '/project/modern/src');
+  assert.equal(resolveClassPath('${workspace.dir}/shared', '/project', '/workspace', 'classic'), '/workspace/shared');
+  assert.equal(resolveClassPath('${toolkit.name}/src', '/project', '/workspace'), undefined);
+  assert.equal(resolveClassPath('${framework.dir}/src', '/project', '/workspace', 'classic'), undefined);
 });
 
 test('decodes escaped class names and ignores dynamic template contents', () => {

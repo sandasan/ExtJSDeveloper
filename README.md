@@ -8,10 +8,15 @@ A small Visual Studio Code extension for navigating Ext JS applications. The fir
 - Find references with **Shift+F12** or **Peek References** on class names and widget aliases/xtypes.
 - Search the workspace index with **ExtJS: Open Class or xtype**.
 - Browse indexed classes in the **ExtJS Classes** view in Explorer.
+- Browse class dependencies in **ExtJS Dependencies**. Expand a class to see its `extend`, `requires`, `uses`, `mixins`, `controller`, and `viewModel` links, then expand those classes to follow the graph.
 - Get class name completions in common class and view configuration values such as `requires`, `extend`, `xtype`, `controller`, and `viewModel`.
 - Rebuild the index with **ExtJS: Refresh Workspace Index**. JavaScript file changes are also indexed automatically.
 
-The index tokenizes JavaScript before reading `Ext.define('App.view.MyPanel', { ... })` declarations, so commented-out declarations and braces inside strings, regular expressions, and nested values do not confuse the class metadata scan. It reads top-level `alias` and `xtype` metadata and uses the same tokens to find class-name references, alias strings, xtype values, and dotted class expressions. Set `extjsNavigator.exclude` to add generated or vendor paths to the exclusion list.
+The index tokenizes JavaScript before reading `Ext.define('App.view.MyPanel', { ... })` declarations, so commented-out declarations and braces inside strings, regular expressions, and nested values do not confuse the class metadata scan. It reads top-level `alias`, `xtype`, and dependency metadata and uses the same tokens to find class-name references, alias strings, xtype values, and dotted class expressions.
+
+Source folders are discovered from local `app.json` `classpath` entries. Additional paths can be set in `extjsNavigator.sourceRoots`; if no roots are found, the whole workspace is indexed. This extension does not install or invoke Sencha Cmd, download framework files, or perform license/trial checks. Framework classes appear in the dependency tree only when their source files are already available in the indexed folders.
+
+Set `extjsNavigator.exclude` to add generated or vendor paths to the exclusion list.
 
 ## Run locally
 

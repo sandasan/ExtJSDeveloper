@@ -149,6 +149,7 @@ function scanFile(text, uri) {
     if (tokens[openIndex]?.value !== '{') continue;
     const properties = objectProperties(tokens, openIndex);
     const aliasesForClass = [];
+    const dependencies = [];
     for (const property of properties) {
       if (property.key === 'alias' && (property.value[0]?.type === 'string' || property.value[0]?.value === '[')) {
         aliasesForClass.push(...property.value.filter(token => token.type === 'string').map(token => token.value));
@@ -156,11 +157,21 @@ function scanFile(text, uri) {
       if (property.key === 'xtype' && property.value[0]?.type === 'string') {
         aliasesForClass.push(`widget.${property.value[0].value}`);
       }
+      const dependencyKind = ({
+        extend: 'extends', requires: 'requires', uses: 'uses', mixins: 'mixins',
+        controller: 'controller', viewModel: 'viewModel'
+      })[property.key];
+      if (dependencyKind) {
+        for (const dependency of property.value) {
+          if (dependency.type === 'string' && dependency.value) dependencies.push({ name: dependency.value, kind: dependencyKind });
+        }
+      }
     }
     const nameToken = tokens[i + 4];
     declarations.push({
       name: nameToken.value,
       aliases: [...new Set(aliasesForClass)],
+      dependencies: dependencies.filter((dependency, index, all) => all.findIndex(candidate => candidate.name === dependency.name && candidate.kind === dependency.kind) === index),
       uri,
       offset: nameToken.valueStart,
       nameEnd: nameToken.valueEnd
